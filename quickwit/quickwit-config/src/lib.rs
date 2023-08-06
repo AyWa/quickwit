@@ -93,6 +93,7 @@ pub use crate::storage_config::{
     KinesisSourceParams,
     PulsarSourceParams,
     PulsarSourceAuth,
+    NatsSourceParams,
     RegionOrEndpoint,
     ConstWriteAmplificationMergePolicyConfig,
     StableLogMergePolicyConfig,

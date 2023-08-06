@@ -67,6 +67,8 @@ mod kafka_source;
 mod kinesis;
 #[cfg(feature = "pulsar")]
 mod pulsar_source;
+#[cfg(feature = "nats")]
+mod nats_source;
 mod source_factory;
 mod vec_source;
 mod void_source;
@@ -88,6 +90,8 @@ pub use kinesis::kinesis_source::{KinesisSource, KinesisSourceFactory};
 use once_cell::sync::OnceCell;
 #[cfg(feature = "pulsar")]
 pub use pulsar_source::{PulsarSource, PulsarSourceFactory};
+#[cfg(feature = "nats")]
+pub use nats_source::{NatsSource, NatsSourceFactory};
 use quickwit_actors::{Actor, ActorContext, ActorExitStatus, Handler, Mailbox};
 use quickwit_common::runtimes::RuntimeType;
 use quickwit_config::{SourceConfig, SourceParams};
@@ -301,6 +305,8 @@ pub fn quickwit_supported_sources() -> &'static SourceLoader {
         source_factory.add_source("kinesis", KinesisSourceFactory);
         #[cfg(feature = "pulsar")]
         source_factory.add_source("pulsar", PulsarSourceFactory);
+        #[cfg(feature = "nats")]
+        source_factory.add_source("nats", NatsSourceFactory);
         source_factory.add_source("vec", VecSourceFactory);
         source_factory.add_source("void", VoidSourceFactory);
         source_factory.add_source("ingest-api", IngestApiSourceFactory);

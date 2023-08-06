@@ -89,6 +89,7 @@ impl SourceConfig {
             SourceParams::IngestApi => "ingest-api",
             SourceParams::IngestCli => "ingest-cli",
             SourceParams::Kafka(_) => "kafka",
+            SourceParams::nats(_) => "nats",
             SourceParams::Kinesis(_) => "kinesis",
             SourceParams::Pulsar(_) => "pulsar",
             SourceParams::Vec(_) => "vec",
@@ -104,6 +105,7 @@ impl SourceConfig {
             SourceParams::IngestApi => serde_json::to_value(()),
             SourceParams::IngestCli => serde_json::to_value(()),
             SourceParams::Kafka(params) => serde_json::to_value(params),
+            SourceParams::Nats(params) => serde_json::to_value(params),
             SourceParams::Kinesis(params) => serde_json::to_value(params),
             SourceParams::Pulsar(params) => serde_json::to_value(params),
             SourceParams::Vec(params) => serde_json::to_value(params),
@@ -368,6 +370,24 @@ pub struct VecSourceParams {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct VoidSourceParams;
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NatsSourceParams {
+    // /// Name of the subscription that the source consumes.
+    // pub subscription: String,
+    // /// When backfill mode is enabled, the source exits after reaching the end of the topic.
+    // #[serde(default)]
+    // #[serde(skip_serializing_if = "is_false")]
+    // pub enable_backfill_mode: bool,
+    // /// GCP service account credentials (None will use default via GOOGLE_APPLICATION_CREDENTIALS)
+    // pub credentials: Option<String>,
+    // /// How many threads spread pubsub pull requests over (default 10)
+    // /// Higher values can mean higher throughput but higher overhead
+    // pub pull_parallelism: Option<u64>,
+    // /// The max messages to pull per pull request (default 1000)
+    // pub max_messages_per_pull: Option<i32>,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
