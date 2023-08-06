@@ -219,6 +219,13 @@ services:
     environment:
       # create a fake gcp project and a topic / subscription
       - PUBSUB_PROJECT1=quickwit-emulator,emulator_topic:emulator_subscription
+  nats:
+    image: nats:${NATS_VERSION:-2.9.20}
+    container_name: nats
+    ports:
+      - "${MAP_HOST_NATS:-127.0.0.1}:4222:4222"
+    command:
+      - "-js"
 
 volumes:
   localstack_data:
