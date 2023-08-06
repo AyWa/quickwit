@@ -39,6 +39,7 @@ members = [
 debug = false
 
 [workspace.dependencies]
+async-nats = "0.31.0"
 anyhow = "1"
 arc-swap = "1.6"
 assert-json-diff = "2"
