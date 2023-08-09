@@ -3,6 +3,7 @@ use std::time::{Duration};
 use serde_json::{json, Value as JsonValue};
 use async_trait::async_trait;
 use quickwit_config::NatsSourceParams;
+use tokio_stream::StreamExt;
 use crate::source::{
     Source, SourceActor, SourceContext, SourceExecutionContext, TypedSourceFactory,
 };
@@ -11,6 +12,7 @@ use quickwit_metastore::checkpoint::{
 };
 use crate::actors::DocProcessor;
 use quickwit_actors::{ActorContext, ActorExitStatus, Mailbox};
+use async_nats::{connect, Client, Subscriber};
 
 
 pub struct NatsSourceFactory;
@@ -31,7 +33,9 @@ impl TypedSourceFactory for NatsSourceFactory {
 
 
 pub struct NatsSource {
-
+    client: Client,
+    subscriber: Subscriber,
+    topic: String,
 }
 
 impl NatsSource {
@@ -40,7 +44,14 @@ impl NatsSource {
         params: NatsSourceParams,
         checkpoint: SourceCheckpoint,
     ) -> anyhow::Result<Self> {
-        Ok(NatsSource{})
+        let topic = "nats_source".to_string();
+        let client = connect("localhost:4222").await?;
+        let subscriber = client.subscribe(topic.clone()).await?;
+        Ok(NatsSource{
+            client: client,
+            subscriber: subscriber,
+            topic: topic,
+        })
     }
 }
 
@@ -51,6 +62,9 @@ impl Source for NatsSource {
         doc_processor_mailbox: &Mailbox<DocProcessor>,
         ctx: &SourceContext
     ) -> Result<Duration, ActorExitStatus> {
+        // Read the message and send
+        self.subscriber.next().await;
+
         Ok(Duration::default())
     }
 
@@ -59,11 +73,16 @@ impl Source for NatsSource {
         checkpoint: SourceCheckpoint,
         _ctx: &ActorContext<SourceActor>,
     ) -> anyhow::Result<()> {
+        // nothing to do
         Ok(())
     }
 
     fn name(&self) -> String {
-        "".to_string()
+        format!(
+            // todo change with sourceID
+            "NatsSource{{source_id={}}}",
+            self.topic
+        )
     }
 
     fn observable_state(&self) -> JsonValue {

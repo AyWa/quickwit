@@ -89,7 +89,7 @@ impl SourceConfig {
             SourceParams::IngestApi => "ingest-api",
             SourceParams::IngestCli => "ingest-cli",
             SourceParams::Kafka(_) => "kafka",
-            SourceParams::nats(_) => "nats",
+            SourceParams::Nats(_) => "nats",
             SourceParams::Kinesis(_) => "kinesis",
             SourceParams::Pulsar(_) => "pulsar",
             SourceParams::Vec(_) => "vec",
@@ -210,6 +210,8 @@ pub enum SourceParams {
     IngestApi,
     #[serde(rename = "ingest-cli")]
     IngestCli,
+    #[serde(rename = "nats")]
+    Nats(NatsSourceParams),
     Kafka(KafkaSourceParams),
     Kinesis(KinesisSourceParams),
     Pulsar(PulsarSourceParams),
