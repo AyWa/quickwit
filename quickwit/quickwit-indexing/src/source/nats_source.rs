@@ -86,8 +86,40 @@ impl Source for NatsSource {
         doc_processor_mailbox: &Mailbox<DocProcessor>,
         ctx: &SourceContext
     ) -> Result<Duration, ActorExitStatus> {
+        let now = Instant::now();
+        let mut batch = BatchBuilder::default();
+        let deadline = tokio::time::sleep(*quickwit_actors::HEARTBEAT / 2);
+        tokio::pin!(deadline);
+
+        let mut subscriber = match self.client.subscribe(self.topic.into()).await {
+            Ok(subscriber) => subscriber,
+            Err(err) => {
+                return Err(ActorExitStatus::from(anyhow::Error::new(err)))
+            }
+        };
+
         // Read the message and send
-        self.subscriber.next().await;
+        loop {
+            tokio::select! {
+                message = subscriber.next() => {
+                    let message = message
+                        .ok_or_else(|| ActorExitStatus::from(anyhow!("Message couldnt be read.")))
+                        .unwrap_or_else(|err| {
+                            ctx.record_progress();
+                            panic!("Message couldnt be read. {}", err)
+                        });
+                    self.process_message(message, &mut batch).map_err(ActorExitStatus::from)?;
+
+                    if batch.num_bytes >= BATCH_NUM_BYTES_LIMIT {
+                        break;
+                    }
+                }
+                _ = &mut deadline => {
+                    break;
+                }
+            }
+            ctx.record_progress();
+        }
 
         Ok(Duration::default())
     }
