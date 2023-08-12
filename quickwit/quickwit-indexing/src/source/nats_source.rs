@@ -71,11 +71,52 @@ impl NatsSource {
         let topic = "nats_source".to_string();
         let client = connect("localhost:4222").await?;
         let subscriber = client.subscribe(topic.clone()).await?;
+        let state = NatsSourceState::default();
         Ok(NatsSource{
             client: client,
             subscriber: subscriber,
             topic: topic,
+            state: state,
         })
+    }
+    fn process_message(
+        &mut self,
+        message: async_nats::Message,
+        batch: &mut BatchBuilder,
+    ) -> anyhow::Result<()> {
+        let payload = message.payload;
+        self.add_doc_to_batch(
+            &message.subject,
+            // current_position,
+            payload,
+            batch,
+        );
+        Ok(())
+    }
+
+    fn add_doc_to_batch(
+        &mut self,
+        topic: &str,
+        // msg_position: Position,
+        doc: Bytes,
+        batch: &mut BatchBuilder,
+    ) -> anyhow::Result<()> {
+        if doc.is_empty() {
+            warn!("Message received from queue was empty.");
+            self.state.num_invalid_messages += 1;
+            return Ok(());
+        }
+
+        let partition = PartitionId::from(topic);
+        let num_bytes = doc.len() as u64;
+
+        let current_position = batch
+            .push(doc);
+
+        self.state.num_bytes_processed += num_bytes;
+        self.state.num_messages_processed += 1;
+
+        Ok(())
     }
 }
 
