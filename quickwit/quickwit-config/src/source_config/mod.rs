@@ -32,6 +32,7 @@ use serde_json::Value as JsonValue;
 pub use serialize::load_source_config_from_user_config;
 // For backward compatibility.
 use serialize::VersionedSourceConfig;
+use async_nats::ConnectOptions;
 
 use crate::TestableForRegression;
 
@@ -376,19 +377,13 @@ pub struct VoidSourceParams;
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NatsSourceParams {
-    // /// Name of the subscription that the source consumes.
-    // pub subscription: String,
-    // /// When backfill mode is enabled, the source exits after reaching the end of the topic.
-    // #[serde(default)]
-    // #[serde(skip_serializing_if = "is_false")]
-    // pub enable_backfill_mode: bool,
-    // /// GCP service account credentials (None will use default via GOOGLE_APPLICATION_CREDENTIALS)
-    // pub credentials: Option<String>,
-    // /// How many threads spread pubsub pull requests over (default 10)
-    // /// Higher values can mean higher throughput but higher overhead
-    // pub pull_parallelism: Option<u64>,
-    // /// The max messages to pull per pull request (default 1000)
-    // pub max_messages_per_pull: Option<i32>,
+    /// The subject that the source consumes.
+    pub subject: String,
+    /// The connection URI for NATS.
+    pub address: Vec<String>,
+    // see: https://docs.rs/async-nats/latest/async_nats/struct.ConnectOptions.html
+    // Connection options - >need to implement clone and serialize
+    // pub options: ConnectOptions,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
