@@ -16,7 +16,7 @@ use quickwit_metastore::checkpoint::{
 };
 use crate::actors::DocProcessor;
 use quickwit_actors::{ActorContext, ActorExitStatus, Mailbox};
-use async_nats::{connect, Client, Subscriber};
+use async_nats::{connect, Client, Subscriber, ServerAddr};
 
 const BATCH_NUM_BYTES_LIMIT: u64 = 5_000_000;
 
@@ -68,8 +68,12 @@ impl NatsSource {
         params: NatsSourceParams,
         checkpoint: SourceCheckpoint,
     ) -> anyhow::Result<Self> {
-        let topic = "nats_source".to_string();
-        let client = connect("localhost:4222").await?;
+        let topic = params.subject.clone();
+        let client = connect(
+            params.address.iter()
+                .map(|url| url.parse())
+                .collect::<Result<Vec<ServerAddr>, _>>()?
+        ).await?;
         let subscriber = client.subscribe(topic.clone()).await?;
         let state = NatsSourceState::default();
         Ok(NatsSource{
@@ -90,7 +94,7 @@ impl NatsSource {
             // current_position,
             payload,
             batch,
-        );
+        )?;
         Ok(())
     }
 
@@ -127,22 +131,15 @@ impl Source for NatsSource {
         doc_processor_mailbox: &Mailbox<DocProcessor>,
         ctx: &SourceContext
     ) -> Result<Duration, ActorExitStatus> {
-        let now = Instant::now();
+        let _now = Instant::now();
         let mut batch = BatchBuilder::default();
         let deadline = tokio::time::sleep(*quickwit_actors::HEARTBEAT / 2);
         tokio::pin!(deadline);
 
-        let mut subscriber = match self.client.subscribe(self.topic.into()).await {
-            Ok(subscriber) => subscriber,
-            Err(err) => {
-                return Err(ActorExitStatus::from(anyhow::Error::new(err)))
-            }
-        };
-
         // Read the message and send
         loop {
             tokio::select! {
-                message = subscriber.next() => {
+                message = self.subscriber.next() => {
                     let message = message
                         .ok_or_else(|| ActorExitStatus::from(anyhow!("Message couldnt be read.")))
                         .unwrap_or_else(|err| {

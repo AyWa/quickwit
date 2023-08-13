@@ -5291,6 +5291,7 @@ name = "quickwit-config"
 version = "0.6.3"
 dependencies = [
  "anyhow",
+ "async-nats",
  "byte-unit",
  "bytes",
  "chrono",
