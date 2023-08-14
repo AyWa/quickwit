@@ -1214,7 +1214,7 @@ mod kafka_broker_tests {
         let source_loader = quickwit_supported_sources();
         {
             let metastore = metastore_for_test();
-            let index_id = append_random_suffix("test-kafka-source--index");
+            let index_id: String = append_random_suffix("test-kafka-source--index");
             let (source_id, source_config) = get_source_config(&topic);
             let index_uid = setup_index(metastore.clone(), &index_id, &source_id, &[]).await;
             let source = source_loader

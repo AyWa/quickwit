@@ -24,16 +24,18 @@ use std::time::{Duration, Instant};
 use anyhow::Context;
 use async_trait::async_trait;
 use bytes::Bytes;
-use google_cloud_default::WithAuthExt;
+use futures_util::StreamExt;
 use google_cloud_pubsub::client::{Client, ClientConfig};
-use google_cloud_pubsub::subscription::Subscription;
+use google_cloud_pubsub::subscription::{Subscription, MessageStream};
+use google_cloud_auth::credentials::CredentialsFile;
+use google_cloud_gax::retry::RetrySetting;
 use quickwit_actors::{ActorContext, ActorExitStatus, Mailbox};
 use quickwit_common::rand::append_random_suffix;
 use quickwit_config::GcpPubSubSourceParams;
 use quickwit_metastore::checkpoint::{PartitionId, Position, SourceCheckpoint};
 use serde_json::Value as JsonValue;
 use tokio::time;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use super::SourceActor;
 use crate::actors::DocProcessor;
@@ -77,6 +79,7 @@ pub struct GcpPubSubSource {
     ctx: Arc<SourceExecutionContext>,
     subscription_name: String,
     subscription: Subscription,
+    subscription_stream: MessageStream,
     state: GcpPubSubSourceState,
     backfill_mode_enabled: bool,
     partition_id: PartitionId,
@@ -96,10 +99,19 @@ impl GcpPubSubSource {
         let max_messages_per_pull = params
             .max_messages_per_pull
             .unwrap_or(DEFAULT_MAX_MESSAGES_PER_PULL);
-        let client_config = ClientConfig::default()
-            .with_auth()
-            .await
-            .context("Failed to authenticate GCP PubSub source.")?;
+
+        let mut client_config: ClientConfig= match params.credentials_file_path {
+            Some(file_path) => {
+                let cred: CredentialsFile = CredentialsFile::new_from_file(file_path).await.unwrap();
+                ClientConfig::default().with_credentials(cred).await
+            }
+            None => ClientConfig::default().with_auth().await
+        }.context("Failed to create GCP PubSub client.")?;
+
+        if params.project_id.is_some() {
+            client_config.project_id = params.project_id
+        }
+
         let client = Client::new(client_config)
             .await
             .context("Failed to create GCP PubSub client.")?;
@@ -117,10 +129,16 @@ impl GcpPubSubSource {
             "Starting GCP PubSub source."
         );
 
+        if !subscription.exists(Some(RetrySetting::default())).await? {
+            anyhow::bail!("gcp pubsub subscription {subscription_name} does not exist");
+        }
+        let subscription_stream = subscription.subscribe(None).await?;
+
         Ok(Self {
             ctx,
             subscription_name,
             subscription,
+            subscription_stream,
             state: GcpPubSubSourceState::default(),
             backfill_mode_enabled,
             partition_id,
@@ -145,18 +163,26 @@ impl Source for GcpPubSubSource {
         let mut batch: BatchBuilder = BatchBuilder::default();
         let deadline = time::sleep(*quickwit_actors::HEARTBEAT / 2);
         tokio::pin!(deadline);
+        warn!("coucou??");
 
+        // TODO: pull_message_batch will wait until message arrive
+        // potentially it will reach deadline which is not what we want ?
         // TODO: lets add parallelism support in next PR
         // TODO: ensure we ACK the message after being commit: at least once
         // TODO: ensure we increase_ack_deadline for the items
         loop {
             tokio::select! {
-                _ = self.pull_message_batch(&mut batch) => {
+                resp = self.pull_message_batch(&mut batch) => {
+                    if let Err(err) = resp {
+                        warn!("failed to pull message {:?}", err);
+                    }
+
                     if batch.num_bytes >= BATCH_NUM_BYTES_LIMIT {
                         break;
                     }
                 }
                 _ = &mut deadline => {
+                    warn!("was deadline??");
                     break;
                 }
             }
@@ -239,5 +265,147 @@ impl GcpPubSubSource {
             .record_partition_delta(self.partition_id.clone(), from_position, to_position)
             .context("Failed to record partition delta.")?;
         Ok(())
+    }
+}
+
+
+// TODO: first implementation of the test
+// After we need to ensure at_least_once and concurrent pipeline
+#[cfg(all(test, feature = "gcp-pubsub-broker-tests"))]
+mod gcp_pubsub_broker_tests {
+    use super::*;
+    use crate::models::RawDocBatch;
+    use crate::source::quickwit_supported_sources;
+    use std::{num::NonZeroUsize, env::var};
+    use std::path::PathBuf;
+    use google_cloud_pubsub::publisher::Publisher;
+    use google_cloud_pubsub::subscription::SubscriptionConfig;
+    use google_cloud_googleapis::pubsub::v1::PubsubMessage;
+    use quickwit_actors::Universe;
+    use quickwit_proto::IndexUid;
+    use quickwit_config::{SourceConfig, SourceInputFormat, SourceParams};
+    use quickwit_metastore::{metastore_for_test, Metastore};
+    use serde_json::json;
+    
+    static GCP_TEST_PROJECT: &str = "quickwit-emulator";
+
+    fn get_source_config(subscription: &str) -> SourceConfig {
+        var("PUBSUB_EMULATOR_HOST").expect("test should be run with PUBSUB_EMULATOR_HOST env");
+        let source_id = append_random_suffix("test-gcp-pubsub-source--source");
+        SourceConfig {
+            source_id: source_id,
+            desired_num_pipelines: NonZeroUsize::new(1).unwrap(),
+            max_num_pipelines_per_indexer: NonZeroUsize::new(1).unwrap(),
+            enabled: true,
+            source_params: SourceParams::GcpPubSub(GcpPubSubSourceParams {
+                project_id: Some(GCP_TEST_PROJECT.to_string()),
+                enable_backfill_mode: true,
+                subscription: subscription.to_string(),
+                credentials_file_path: None,
+                pull_parallelism: Some(1),
+                max_messages_per_pull: None,
+            }),
+            transform_config: None,
+            input_format: SourceInputFormat::Json,
+        }
+    }
+
+    async fn create_topic_and_subscription(topic: &str, subscription: &str) -> anyhow::Result<Publisher> {
+        let mut conf = ClientConfig::default();
+        conf.project_id = Some(GCP_TEST_PROJECT.to_string());
+        let c = Client::new(conf.with_auth().await?).await?;
+        let subscription_config = SubscriptionConfig::default();
+
+        let created_topic = c.create_topic(topic, None, None).await?;
+        c.create_subscription(subscription, topic, subscription_config, None).await?;
+
+        anyhow::Ok(created_topic.new_publisher(None))
+    }
+    
+    #[tokio::test]
+    async fn test_gcp_source_invalid_subscription() -> anyhow::Result<()> {
+        quickwit_common::setup_logging_for_tests();
+        let sub = append_random_suffix("test-gcp-pubsub-source--sub");
+        let source_config = get_source_config(&sub);
+        
+        let index_id = append_random_suffix("test-gcp-pubsub-source--process-message--index");
+        let index_uid = IndexUid::new(&index_id);
+        let metastore = metastore_for_test();
+        let params = if let SourceParams::GcpPubSub(params) = source_config.clone().source_params {
+            params
+        } else {
+            unreachable!()
+        };
+        let ctx = SourceExecutionContext::for_test(
+            metastore,
+            index_uid,
+            PathBuf::from("./queues"),
+            source_config,
+        );
+        match GcpPubSubSource::try_new(ctx, params).await {
+            Err(_) => anyhow::Ok(()),
+            _ => Err(anyhow::anyhow!("gcp pubsub should fail to create when subscription does not exist")),
+        }
+    }
+
+
+    #[tokio::test]
+    async fn test_gcp_source() -> anyhow::Result<()> {
+        quickwit_common::setup_logging_for_tests();
+        let universe = Universe::with_accelerated_time();
+
+        let topic = append_random_suffix("test-gcp-pubsub-source--topic");
+        let subscription = append_random_suffix("test-gcp-pubsub-source--sub");
+        let publisher = create_topic_and_subscription(&topic, &subscription).await?;
+
+        let source_config = get_source_config(&subscription);
+
+        let source_loader = quickwit_supported_sources();
+        let metastore = metastore_for_test();
+        let index_id: String = append_random_suffix("test-kafka-source--index");
+        let index_uid = IndexUid::new(&index_id);
+
+        let mut msgs = Vec::new();
+        for i in 0..10 {
+            let mut msg = PubsubMessage::default();
+            msg.data = format!("message {}", i).into();
+            msgs.push(msg);
+        }
+
+        let publish_resp = publisher.publish_bulk(msgs).await;
+        for val in publish_resp {
+            val.get().await?;
+        }
+        
+        let source = source_loader
+        .load_source(
+            SourceExecutionContext::for_test(
+                metastore,
+                index_uid,
+                PathBuf::from("./queues"),
+                source_config,
+            ),
+            SourceCheckpoint::default(),
+        )
+        .await?;
+
+        let (doc_processor_mailbox, doc_processor_inbox) = universe.create_test_mailbox();
+        let source_actor = SourceActor {
+            source,
+            doc_processor_mailbox: doc_processor_mailbox.clone(),
+        };
+        let (_source_mailbox, source_handle) = universe.spawn_builder().spawn(source_actor);
+        let (exit_status, exit_state) = source_handle.join().await;
+        assert!(exit_status.is_success());
+        
+        let messages: Vec<RawDocBatch> = doc_processor_inbox.drain_for_test_typed();
+        assert!(messages.is_empty());
+
+        // TODO: set expected state !
+        let expected_state = json!({});
+        assert_eq!(exit_state, expected_state);
+        // assert_eq!(gcp_pubsub_source.state.num_messages_processed, 0);
+
+        anyhow::Ok(())
     }
 }
