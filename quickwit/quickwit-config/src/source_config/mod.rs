@@ -381,6 +381,8 @@ pub struct NatsSourceParams {
     pub subject: String,
     /// The connection URI for NATS.
     pub address: Vec<String>,
+    /// The queue_group for NATS.
+    pub queue_group: String,
     // see: https://docs.rs/async-nats/latest/async_nats/struct.ConnectOptions.html
     // Connection options - >need to implement clone and serialize
     // pub options: ConnectOptions,

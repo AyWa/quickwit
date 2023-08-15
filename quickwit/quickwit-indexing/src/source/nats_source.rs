@@ -1,22 +1,24 @@
 use std::default;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+
 use anyhow::anyhow;
+use async_nats::{connect, Client, ServerAddr, Subscriber};
+use async_trait::async_trait;
 use bytes::Bytes;
 use futures::StreamExt;
-use serde_json::{json, Value as JsonValue};
-use async_trait::async_trait;
+use quickwit_actors::{ActorContext, ActorExitStatus, Mailbox};
 use quickwit_config::NatsSourceParams;
-use tracing::log::warn;
-use crate::source::{
-    BatchBuilder, Source, SourceActor, SourceContext, SourceExecutionContext, TypedSourceFactory,
-};
 use quickwit_metastore::checkpoint::{
     PartitionId, Position, SourceCheckpoint, SourceCheckpointDelta,
 };
+use serde_json::{json, Value as JsonValue};
+use tracing::log::warn;
+
 use crate::actors::DocProcessor;
-use quickwit_actors::{ActorContext, ActorExitStatus, Mailbox};
-use async_nats::{connect, Client, Subscriber, ServerAddr};
+use crate::source::{
+    BatchBuilder, Source, SourceActor, SourceContext, SourceExecutionContext, TypedSourceFactory,
+};
 
 const BATCH_NUM_BYTES_LIMIT: u64 = 5_000_000;
 
@@ -59,6 +61,7 @@ pub struct NatsSource {
     client: Client,
     subscriber: Subscriber,
     topic: String,
+    queue_group: String,
     state: NatsSourceState,
 }
 
@@ -69,18 +72,25 @@ impl NatsSource {
         checkpoint: SourceCheckpoint,
     ) -> anyhow::Result<Self> {
         let topic = params.subject.clone();
+        let queue_group = params.queue_group.clone();
         let client = connect(
-            params.address.iter()
+            params
+                .address
+                .iter()
                 .map(|url| url.parse())
-                .collect::<Result<Vec<ServerAddr>, _>>()?
-        ).await?;
-        let subscriber = client.subscribe(topic.clone()).await?;
+                .collect::<Result<Vec<ServerAddr>, _>>()?,
+        )
+        .await?;
+        let subscriber = client
+            .queue_subscribe(topic.clone(), queue_group.clone())
+            .await?;
         let state = NatsSourceState::default();
-        Ok(NatsSource{
-            client: client,
-            subscriber: subscriber,
-            topic: topic,
-            state: state,
+        Ok(NatsSource {
+            client,
+            subscriber,
+            topic,
+            queue_group,
+            state,
         })
     }
     fn process_message(
@@ -114,8 +124,7 @@ impl NatsSource {
         let partition = PartitionId::from(topic);
         let num_bytes = doc.len() as u64;
 
-        let current_position = batch
-            .push(doc);
+        let current_position = batch.push(doc);
 
         self.state.num_bytes_processed += num_bytes;
         self.state.num_messages_processed += 1;
@@ -129,7 +138,7 @@ impl Source for NatsSource {
     async fn emit_batches(
         &mut self,
         doc_processor_mailbox: &Mailbox<DocProcessor>,
-        ctx: &SourceContext
+        ctx: &SourceContext,
     ) -> Result<Duration, ActorExitStatus> {
         let _now = Instant::now();
         let mut batch = BatchBuilder::default();
