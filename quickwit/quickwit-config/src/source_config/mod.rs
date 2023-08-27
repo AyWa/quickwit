@@ -32,6 +32,7 @@ use serde_json::Value as JsonValue;
 pub use serialize::load_source_config_from_user_config;
 // For backward compatibility.
 use serialize::VersionedSourceConfig;
+use async_nats::ConnectOptions;
 
 use crate::TestableForRegression;
 
@@ -89,6 +90,7 @@ impl SourceConfig {
             SourceParams::IngestApi => "ingest-api",
             SourceParams::IngestCli => "ingest-cli",
             SourceParams::Kafka(_) => "kafka",
+            SourceParams::Nats(_) => "nats",
             SourceParams::Kinesis(_) => "kinesis",
             SourceParams::Pulsar(_) => "pulsar",
             SourceParams::Vec(_) => "vec",
@@ -104,6 +106,7 @@ impl SourceConfig {
             SourceParams::IngestApi => serde_json::to_value(()),
             SourceParams::IngestCli => serde_json::to_value(()),
             SourceParams::Kafka(params) => serde_json::to_value(params),
+            SourceParams::Nats(params) => serde_json::to_value(params),
             SourceParams::Kinesis(params) => serde_json::to_value(params),
             SourceParams::Pulsar(params) => serde_json::to_value(params),
             SourceParams::Vec(params) => serde_json::to_value(params),
@@ -208,6 +211,8 @@ pub enum SourceParams {
     IngestApi,
     #[serde(rename = "ingest-cli")]
     IngestCli,
+    #[serde(rename = "nats")]
+    Nats(NatsSourceParams),
     Kafka(KafkaSourceParams),
     Kinesis(KinesisSourceParams),
     Pulsar(PulsarSourceParams),
@@ -368,6 +373,20 @@ pub struct VecSourceParams {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct VoidSourceParams;
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NatsSourceParams {
+    /// The subject that the source consumes.
+    pub subject: String,
+    /// The connection URI for NATS.
+    pub address: Vec<String>,
+    /// The queue_group for NATS.
+    pub queue_group: String,
+    // see: https://docs.rs/async-nats/latest/async_nats/struct.ConnectOptions.html
+    // Connection options - >need to implement clone and serialize
+    // pub options: ConnectOptions,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
