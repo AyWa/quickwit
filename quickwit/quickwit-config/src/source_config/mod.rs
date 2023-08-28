@@ -16,7 +16,7 @@
 //
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
-
+mod nats_serialize;
 pub(crate) mod serialize;
 
 use std::num::NonZeroUsize;
@@ -32,7 +32,6 @@ use serde_json::Value as JsonValue;
 pub use serialize::load_source_config_from_user_config;
 // For backward compatibility.
 use serialize::VersionedSourceConfig;
-use async_nats::ConnectOptions;
 
 use crate::TestableForRegression;
 
